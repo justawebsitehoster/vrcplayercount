@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>VRChat Premium Dashboard</title>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600&display=swap" rel="stylesheet">
+
+<style>
+* { margin:0; padding:0; box-sizing:border-box; font-family:'Inter',sans-serif; }
+
+body {
+  background: radial-gradient(circle at top, #0f172a, #020617);
+  color: #e5e7eb;
+  padding: 30px;
+}
+
+.header { margin-bottom: 25px; }
+.header h1 { font-size: 1.6rem; font-weight: 500; }
+
+.dashboard {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 20px;
+}
+
+.card {
+  background: rgba(17,24,39,0.8);
+  backdrop-filter: blur(10px);
+  border-radius: 18px;
+  padding: 20px;
+  border: 1px solid rgba(255,255,255,0.05);
+  box-shadow: 0 0 40px rgba(0,0,0,0.6);
+  transition: 0.2s;
+}
+
+.card:hover {
+  transform: translateY(-3px);
+  box-shadow: 0 0 60px rgba(56,189,248,0.15);
+}
+
+.card h2 {
+  font-size: 0.85rem;
+  opacity: 0.6;
+  margin-bottom: 10px;
+}
+
+.big {
+  font-size: 2.8rem;
+  font-weight: 600;
+  background: linear-gradient(90deg, #38bdf8, #818cf8);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+.small { font-size: 1.4rem; }
+
+.chart {
+  grid-column: span 3;
+  height: 320px;
+}
+
+select {
+  background: #020617;
+  color: white;
+  border: none;
+  padding: 5px;
+  border-radius: 5px;
+}
+</style>
+</head>
+
+<body>
+
+<div class="header">
+  <h1>VRChat Live Player Count</h1>
+</div>
+
+<div class="dashboard">
+
+  <div class="card">
+    <h2>Current Total Users</h2>
+    <div class="big" id="current">--</div>
+  </div>
+
+  <div class="card">
+    <h2>24h Peak</h2>
+    <div class="small" id="peak">--</div>
+  </div>
+
+  <div class="card">
+    <h2>Server Status</h2>
+    <div class="small" id="status">
+      <span style="color:#22c55e;">●</span> Online
+    </div>
+
+    <div style="margin-top:10px; font-size:0.85rem; opacity:0.7;">
+      Refresh:
+      <select id="intervalSelect">
+        <option value="2000">2s</option>
+        <option value="5000" selected>5s</option>
+        <option value="10000">10s</option>
+        <option value="30000">30s</option>
+      </select>
+    </div>
+  </div>
+
+  <div class="card chart">
+    <h2>Users Over Time</h2>
+    <canvas id="chart"></canvas>
+  </div>
+
+</div>
+
+<script>
+const WORKER = "https://throbbing-dawn-b523.dannycanplay.workers.dev/";
+
+// Load stored data
+let dataPoints = JSON.parse(localStorage.getItem("vrchat_data")) || [];
+
+// Chart setup
+const ctx = document.getElementById("chart").getContext("2d");
+
+const chart = new Chart(ctx, {
+  type: "line",
+  data: {
+    labels: dataPoints.map(p => new Date(p.time).toLocaleTimeString()),
+    datasets: [{
+      data: dataPoints.map(p => p.value),
+      borderColor: "#38bdf8",
+      backgroundColor: "rgba(56,189,248,0.08)",
+      fill: true,
+      tension: 0.35,
+      pointRadius: 0
+    }]
+  },
+  options: {
+    animation: false,
+    responsive: true,
+    plugins: { legend: { display: false } },
+    scales: {
+      x: {
+        ticks: { color: "#9ca3af" },
+        grid: { color: "rgba(255,255,255,0.05)" }
+      },
+      y: {
+        ticks: { color: "#9ca3af" },
+        grid: { color: "rgba(255,255,255,0.05)" }
+      }
+    }
+  }
+});
+
+// Interval system
+let UPDATE_INTERVAL = 5000;
+let intervalId = null;
+
+function startInterval() {
+  if (intervalId) clearInterval(intervalId);
+  intervalId = setInterval(update, UPDATE_INTERVAL);
+}
+
+// Dropdown listener
+document.getElementById("intervalSelect").addEventListener("change", (e) => {
+  UPDATE_INTERVAL = parseInt(e.target.value);
+  startInterval();
+});
+
+// Fetch + update
+async function update() {
+  try {
+    const res = await fetch(WORKER);
+    const data = await res.json();
+    const users = data.onlineUsers;
+
+    // Update current users
+    document.getElementById("current").textContent = users.toLocaleString();
+
+    // Status indicator
+    if (users > 0) {
+      document.getElementById("status").innerHTML =
+        `<span style="color:#22c55e;">●</span> Online`;
+    } else {
+      document.getElementById("status").innerHTML =
+        `<span style="color:#ef4444;">●</span> Offline`;
+    }
+
+    // Add datapoint
+    dataPoints.push({ time: Date.now(), value: users });
+
+    // Keep last 24h
+    const cutoff = Date.now() - (24 * 60 * 60 * 1000);
+    dataPoints = dataPoints.filter(p => p.time > cutoff);
+
+    // 24h peak
+    const peak = Math.max(...dataPoints.map(p => p.value), 0);
+    document.getElementById("peak").textContent = peak.toLocaleString();
+
+    // Save
+    localStorage.setItem("vrchat_data", JSON.stringify(dataPoints));
+
+    // Update chart
+    chart.data.labels = dataPoints.map(p => new Date(p.time).toLocaleTimeString());
+    chart.data.datasets[0].data = dataPoints.map(p => p.value);
+    chart.update();
+
+  } catch (e) {
+    document.getElementById("status").innerHTML =
+      `<span style="color:#ef4444;">●</span> Error`;
+    console.error(e);
+  }
+}
+
+// Initial render
+if (dataPoints.length > 0) {
+  const peak = Math.max(...dataPoints.map(p => p.value), 0);
+  document.getElementById("peak").textContent = peak.toLocaleString();
+}
+
+// Start
+update();
+startInterval();
+</script>
+
+</body>
+</html>
